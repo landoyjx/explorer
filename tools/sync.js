@@ -376,7 +376,8 @@ var syncChain = function (config, nextBlock) {
     if (nextBlock === null) {
       console.log('nextBlock is null');
       return;
-    } if (nextBlock < config.startBlock) {
+    }
+    if (nextBlock < config.startBlock) {
       writeBlockToDB(config, null, true);
       writeTransactionsToDB(config, null, true);
       console.log('*** Sync Finsihed ***');
@@ -400,7 +401,7 @@ var syncChain = function (config, nextBlock) {
       count--;
     }
 
-    setTimeout(() => { syncChain(config, nextBlock); }, 500);
+    setTimeout(() => { syncChain(config, nextBlock); }, 5000);
   } else {
     console.log(`Error: Web3 connection time out trying to get block ${nextBlock} retrying connection now`);
     syncChain(config, nextBlock);
