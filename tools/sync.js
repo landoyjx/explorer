@@ -55,7 +55,7 @@ console.log(`Connecting ${config.nodeAddr}:${config.wsPort}...`);
 // Sets address for RPC WEB3 to connect to, usually your node IP address defaults ot localhost
 const web3 = new Web3(new Web3.providers.WebsocketProvider(`ws://${config.nodeAddr}:${config.wsPort.toString()}`));
 
-const normalizeTX = async (txData, receipt, blockData) => {
+const normalizeTX = (txData, receipt, blockData) => {
   const tx = {
     blockHash: txData.blockHash,
     blockNumber: txData.blockNumber,
@@ -93,7 +93,7 @@ const normalizeTX = async (txData, receipt, blockData) => {
 /**
   Write the whole block object to DB
 **/
-var writeBlockToDB = function (config_, blockData, flush) {
+const writeBlockToDB = async (config_, blockData, flush) => {
   const self = writeBlockToDB;
   if (!self.bulkOps) {
     self.bulkOps = [];
@@ -110,22 +110,21 @@ var writeBlockToDB = function (config_, blockData, flush) {
     self.bulkOps = [];
     if (bulk.length === 0) return;
 
-    Block.collection.insert(bulk, (err, blocks) => {
-      if (typeof err !== 'undefined' && err) {
-        if (err.code === 11000) {
-          if (!('quiet' in config_ && config_.quiet === true)) {
-            console.log(`Skip: Duplicate DB key : ${err}`);
-          }
-        } else {
-          console.log(`Error: Aborted due to error on DB: ${err}`);
-          process.exit(9);
+    try {
+      var blocks = await Block.collection.insertMany(bulk);
+      if (!('quiet' in config_ && config_.quiet === true)) {
+        console.log(`* ${blocks.insertedCount} blocks successfully written.`);
+      }
+    } catch (err) {
+      if (err.code === 11000) {
+        if (!('quiet' in config_ && config_.quiet === true)) {
+          console.log(`Skip: Duplicate DB key : ${err}`);
         }
       } else {
-        if (!('quiet' in config_ && config_.quiet === true)) {
-          console.log(`* ${blocks.insertedCount} blocks successfully written.`);
-        }
+        console.log(`Error: Aborted due to error on DB: ${err}`);
+        process.exit(9);
       }
-    });
+    }
   }
 };
 /**
@@ -137,23 +136,27 @@ const writeTransactionsToDB = async (config_, blockData, flush) => {
     self.bulkOps = [];
     self.blocks = 0;
   }
+
   // save miner addresses
   if (!self.miners) {
     self.miners = [];
   }
+
   if (blockData) {
     self.miners.push({ address: blockData.miner, blockNumber: blockData.number, type: 0 });
   }
+
   if (blockData && blockData.transactions.length > 0) {
-    for (d in blockData.transactions) {
+    for (var d in blockData.transactions) {
       const txData = blockData.transactions[d];
       const receipt = await web3.eth.getTransactionReceipt(txData.hash);
-      const tx = await normalizeTX(txData, receipt, blockData);
+      const tx = normalizeTX(txData, receipt, blockData);
       // Contact creation tx, Event logs of internal transaction
       if (txData.input && txData.input.length > 2) {
         // Contact creation tx
         if (txData.to === null) {
           // Support Parity & Geth case
+          var contractAddress;
           if (txData.creates) {
             contractAddress = txData.creates.toLowerCase();
           } else {
@@ -190,6 +193,7 @@ const writeTransactionsToDB = async (config_, blockData, flush) => {
             // Normal Contract
             contractdb.ERC = 0;
           }
+          
           // Write to db
           Contract.update(
             { address: contractAddress },
@@ -308,13 +312,13 @@ const writeTransactionsToDB = async (config_, blockData, flush) => {
             }
           }
           // upsert account
-          Account.collection.update({ address: account }, { $set: data[account] }, { upsert: true });
+          Account.collection.updateOne({ address: account }, { $set: data[account] }, { upsert: true });
         });
       });
     }
 
     if (bulk.length > 0) {
-      Transaction.collection.insert(bulk, (err, tx) => {
+      Transaction.collection.insertMany(bulk, (err, tx) => {
         if (typeof err !== 'undefined' && err) {
           if (err.code === 11000) {
             if (!('quiet' in config_ && config_.quiet === true)) {
@@ -333,6 +337,7 @@ const writeTransactionsToDB = async (config_, blockData, flush) => {
     }
   }
 };
+
 /**
   //Just listen for latest blocks and sync from the start of the app.
 **/
@@ -356,10 +361,11 @@ const listenBlocks = function (config_) {
   });
   newBlocks.on('error', console.error);
 };
+
 /**
   If full sync is checked this function will start syncing the block chain from lastSynced param see README
 **/
-var syncChain = function (config_, nextBlock) {
+const syncChain = function (config_, nextBlock) {
   if (web3.eth.net.isListening()) {
     if (typeof nextBlock === 'undefined') {
       prepareSync(config_, (error, startBlock) => {
@@ -384,28 +390,39 @@ var syncChain = function (config_, nextBlock) {
       return;
     }
 
+    let done = 0;
+    function processBlock(error, blockData) {
+      if (error) {
+        console.log(`Warning (syncChain): error on getting block with hash/number: ${nextBlock}: ${error}`);
+      } else if (blockData === null) {
+        console.log(`Warning: null block data received from the block with hash/number: ${nextBlock}`);
+      } else {
+        writeBlockToDB(config_, blockData);
+        writeTransactionsToDB(config_, blockData);
+        ++done;
+      }
+    }
+
     let count = config_.bulkSize;
     while (nextBlock >= config_.startBlock && count > 0) {
-      web3.eth.getBlock(nextBlock, true, (error, blockData) => {
-        if (error) {
-          console.log(`Warning (syncChain): error on getting block with hash/number: ${nextBlock}: ${error}`);
-        } else if (blockData === null) {
-          console.log(`Warning: null block data received from the block with hash/number: ${nextBlock}`);
-        } else {
-          writeBlockToDB(config_, blockData);
-          writeTransactionsToDB(config_, blockData);
-        }
-      });
+      web3.eth.getBlock(nextBlock, true, processBlock);
       nextBlock--;
       count--;
     }
 
-    setTimeout(() => { syncChain(config_, nextBlock); }, 5000);
+    // block
+    var nextClock = setInterval(() => {
+      if (done != config_.bulkSize) return;
+      syncChain(config_, nextBlock);
+      clearInterval(nextClock);
+    }, 1000);
+
   } else {
     console.log(`Error: Web3 connection time out trying to get block ${nextBlock} retrying connection now`);
     syncChain(config_, nextBlock);
   }
 };
+
 /**
   //check oldest block or starting block then callback
 **/
@@ -455,6 +472,7 @@ const prepareSync = async (config_, callback) => {
     }
   });
 };
+
 /**
   Block Patcher(experimental)
 **/
@@ -518,10 +536,11 @@ const runPatcher = async (config_, startBlock, endBlock) => {
     console.log('*** Block Patching Completed ***');
   }
 };
+
 /**
   This will be used for the patcher(experimental)
 **/
-var checkBlockDBExistsThenWrite = function (config_, patchData, flush) {
+const checkBlockDBExistsThenWrite = function (config_, patchData, flush) {
   Block.find({ number: patchData.number }, (err, b) => {
     if (!b.length) {
       writeBlockToDB(config_, patchData, flush);
@@ -531,6 +550,7 @@ var checkBlockDBExistsThenWrite = function (config_, patchData, flush) {
     }
   });
 };
+
 /**
   Fetch market price from cryptocompare
 **/
