@@ -27,6 +27,12 @@ const TokenTransfer = mongoose.model('TokenTransfer');
 
 const ERC20_METHOD_DIC = { '0xa9059cbb': 'transfer', '0xa978501e': 'transferFrom' };
 
+let block_bulkOps = [];
+let transaction_bulkOps = [];
+let transaction_blocks = 0;
+let transaction_miners = [];
+
+
 /**
   Start config for node connection and sync
 **/
@@ -94,20 +100,19 @@ const normalizeTX = (txData, receipt, blockData) => {
   Write the whole block object to DB
 **/
 const writeBlockToDB = async (config_, blockData, flush) => {
-  const self = writeBlockToDB;
-  if (!self.bulkOps) {
-    self.bulkOps = [];
+  if (!block_bulkOps) {
+    block_bulkOps = [];
   }
   if (blockData && blockData.number >= 0) {
-    self.bulkOps.push(new Block(blockData));
+    block_bulkOps.push(new Block(blockData));
     if (!('quiet' in config_ && config_.quiet === true)) {
       console.log(`\t- block #${blockData.number.toString()} inserted.`);
     }
   }
 
-  if (flush && self.bulkOps.length > 0 || self.bulkOps.length >= config_.bulkSize) {
-    const bulk = self.bulkOps;
-    self.bulkOps = [];
+  if (flush && block_bulkOps.length > 0 || block_bulkOps.length >= config_.bulkSize) {
+    const bulk = block_bulkOps;
+    block_bulkOps = [];
     if (bulk.length === 0) return;
 
     try {
@@ -131,19 +136,18 @@ const writeBlockToDB = async (config_, blockData, flush) => {
   Break transactions out of blocks and write to DB
 **/
 const writeTransactionsToDB = async (config_, blockData, flush) => {
-  const self = writeTransactionsToDB;
-  if (!self.bulkOps) {
-    self.bulkOps = [];
-    self.blocks = 0;
+  if (!transaction_bulkOps) {
+    transaction_bulkOps = [];
+    transaction_blocks = 0;
   }
 
   // save miner addresses
-  if (!self.miners) {
-    self.miners = [];
+  if (!transaction_miners) {
+    transaction_miners = [];
   }
 
   if (blockData) {
-    self.miners.push({ address: blockData.miner, blockNumber: blockData.number, type: 0 });
+    transaction_miners.push({ address: blockData.miner, blockNumber: blockData.number, type: 0 });
   }
 
   if (blockData && blockData.transactions.length > 0) {
@@ -242,20 +246,20 @@ const writeTransactionsToDB = async (config_, blockData, flush) => {
           }
         }
       }
-      self.bulkOps.push(tx);
+      transaction_bulkOps.push(tx);
     }
     if (!('quiet' in config_ && config_.quiet === true)) {
       console.log(`\t- block #${blockData.number.toString()}: ${blockData.transactions.length.toString()} transactions recorded.`);
     }
   }
-  self.blocks++;
+  transaction_blocks++;
 
-  if (flush && self.blocks > 0 || self.blocks >= config_.bulkSize) {
-    const bulk = self.bulkOps;
-    self.bulkOps = [];
-    self.blocks = 0;
-    const { miners } = self;
-    self.miners = [];
+  if (flush && transaction_blocks > 0 || transaction_blocks >= config_.bulkSize) {
+    const bulk = transaction_bulkOps;
+    transaction_bulkOps = [];
+    transaction_blocks = 0;
+    const miners = transaction_miners;
+    transaction_miners = [];
 
     // setup accounts
     const data = {};
