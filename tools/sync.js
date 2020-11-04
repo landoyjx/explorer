@@ -404,12 +404,14 @@ const syncChain = function (config_, nextBlock) {
     }
 
     let count = config_.bulkSize;
+    console.log("new round for block " + nextBlock);
     while (nextBlock >= config_.startBlock && count > 0) {
       web3.eth.getBlock(nextBlock, true, processBlock);
       nextBlock--;
       count--;
     }
 
+    console.log('waiting batch finish for next block' + nextBlock);
     // block
     var nextClock = setInterval(() => {
       if (done != config_.bulkSize) return;
