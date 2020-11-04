@@ -117,10 +117,10 @@ const writeBlockToDB = async (config_, blockData, flush) => {
 
     try {
       let blocks = await Block.collection.insertMany(bulk);
-      bulk = null;
       if (!('quiet' in config_ && config_.quiet === true)) {
-        console.log(`* ${blocks.insertedCount} blocks successfully written.`);
+        console.log(`* ${blocks.insertedCount} blocks successfully written, bukl size=` + bulk.length);
       }
+      bulk = null;
     } catch (err) {
       if (err.code === 11000) {
         if (!('quiet' in config_ && config_.quiet === true)) {
@@ -155,6 +155,8 @@ const writeTransactionsToDB = async (config_, blockData, flush) => {
     for (let d in blockData.transactions) {
       let txData = blockData.transactions[d];
       let receipt = await web3.eth.getTransactionReceipt(txData.hash);
+      if (!receipt) continue;
+
       let tx = normalizeTX(txData, receipt, blockData);
       // Contact creation tx, Event logs of internal transaction
       if (txData.input && txData.input.length > 2) {
@@ -408,7 +410,7 @@ const syncChain = function (config_, nextBlock) {
     }
 
     let count = config_.bulkSize;
-    console.log("new round for block: " + nextBlock);
+    console.log("\n\n\nnew round for block: " + nextBlock);
     while (nextBlock >= config_.startBlock && count > 0) {
       web3.eth.getBlock(nextBlock, true, processBlock);
       nextBlock--;
