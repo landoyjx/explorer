@@ -8,7 +8,7 @@ require('../db.js');
 const BigNumber = require('bignumber.js');
 const _ = require('lodash');
 
-const asyncL = require('async');
+// const asyncL = require('async');
 const Web3 = require('web3');
 
 const ERC20ABI = require('human-standard-token-abi');
@@ -105,9 +105,9 @@ const writeBlockToDB = async (config_, blockData, flush) => {
   }
   if (blockData && blockData.number >= 0) {
     block_bulkOps.push(new Block(blockData));
-    if (!('quiet' in config_ && config_.quiet === true)) {
-      console.log(`\t- block #${blockData.number.toString()} inserted.`);
-    }
+    // if (!('quiet' in config_ && config_.quiet === true)) {
+    //   console.log(`\t- block #${blockData.number.toString()} inserted.`);
+    // }
   }
 
   if (flush && block_bulkOps.length > 0 || block_bulkOps.length >= config_.bulkSize) {
@@ -117,6 +117,7 @@ const writeBlockToDB = async (config_, blockData, flush) => {
 
     try {
       var blocks = await Block.collection.insertMany(bulk);
+      bulk = null;
       if (!('quiet' in config_ && config_.quiet === true)) {
         console.log(`* ${blocks.insertedCount} blocks successfully written.`);
       }
@@ -199,16 +200,17 @@ const writeTransactionsToDB = async (config_, blockData, flush) => {
           }
           
           // Write to db
-          Contract.update(
-            { address: contractAddress },
-            { $setOnInsert: contractdb },
-            { upsert: true },
-            (err, data) => {
-              if (err) {
-                console.log(err);
-              }
-            },
-          );
+          try {
+            await Contract.collection.updateOne(
+              { address: contractAddress },
+              { $setOnInsert: contractdb },
+              { upsert: true });
+          } catch (err) {
+            if (err) {
+              console.log(err);
+            }
+          }
+
         } else {
           // Internal transaction  . write to doc of InternalTx
           const transfer = {
@@ -232,25 +234,28 @@ const writeTransactionsToDB = async (config_, blockData, flush) => {
             transfer.blockNumber = blockData.number;
             transfer.contract = txData.to;
             transfer.timestamp = blockData.timestamp;
+
             // Write transfer transaction into db
-            TokenTransfer.update(
-              { hash: transfer.hash },
-              { $setOnInsert: transfer },
-              { upsert: true },
-              (err, data) => {
-                if (err) {
-                  console.log(err);
-                }
-              },
-            );
+            try {
+              await TokenTransfer.collection.updateOne(
+                { hash: transfer.hash },
+                { $setOnInsert: transfer },
+                { upsert: true });
+            } catch (err) {
+              if (err) {
+                console.log(err);
+              }
+            }
+
           }
         }
       }
       transaction_bulkOps.push(tx);
     }
-    if (!('quiet' in config_ && config_.quiet === true)) {
-      console.log(`\t- block #${blockData.number.toString()}: ${blockData.transactions.length.toString()} transactions recorded.`);
-    }
+
+    // if (!('quiet' in config_ && config_.quiet === true)) {
+    //   console.log(`\t- block #${blockData.number.toString()}: ${blockData.transactions.length.toString()} transactions recorded.`);
+    // }
   }
   transaction_blocks++;
 
@@ -281,32 +286,24 @@ const writeTransactionsToDB = async (config_, blockData, flush) => {
 
     // update balances
     if (config_.settings.useRichList && accounts.length > 0) {
-      asyncL.eachSeries(accounts, (account, eachCallback) => {
-        const { blockNumber } = data[account];
-        // get contract account type
-        web3.eth.getCode(account, (err, code) => {
-          if (err) {
-            console.log(`ERROR: fail to getCode(${account})`);
-            return eachCallback(err);
-          }
+      try {
+        var account, i;
+        for (i in accounts) {
+          account = accounts[i];
+          const { blockNumber } = data[account];
+          
+          // get contract account type
+          var code = await web3.eth.getCode(account);
           if (code.length > 2) {
             data[account].type = 1; // contract type
           }
+          var balance = await  web3.eth.getBalance(account, blockNumber);
+          data[account].balance = parseFloat(web3.utils.fromWei(balance, 'ether'));
+        }
 
-          web3.eth.getBalance(account, blockNumber, (err, balance) => {
-            if (err) {
-              console.log(err);
-              console.log(`ERROR: fail to getBalance(${account})`);
-              return eachCallback(err);
-            }
-
-            data[account].balance = parseFloat(web3.utils.fromWei(balance, 'ether'));
-            eachCallback();
-          });
-        });
-      }, (err) => {
         let n = 0;
-        accounts.forEach((account) => {
+        for (i in accounts) {
+          account = accounts[i];
           n++;
           if (!('quiet' in config_ && config_.quiet === true)) {
             if (n <= 5) {
@@ -316,28 +313,31 @@ const writeTransactionsToDB = async (config_, blockData, flush) => {
             }
           }
           // upsert account
-          Account.collection.updateOne({ address: account }, { $set: data[account] }, { upsert: true });
-        });
-      });
+          await Account.collection.updateOne({ address: account }, { $set: data[account] }, { upsert: true });
+        }
+      } catch (err) {
+        console.log(err);
+        console.log(`ERROR: fail to update account balance (${account})`);
+      }
     }
 
     if (bulk.length > 0) {
-      Transaction.collection.insertMany(bulk, (err, tx) => {
-        if (typeof err !== 'undefined' && err) {
-          if (err.code === 11000) {
-            if (!('quiet' in config_ && config_.quiet === true)) {
-              console.log(`Skip: Duplicate transaction key ${err}`);
-            }
-          } else {
-            console.log(`Error: Aborted due to error on Transaction: ${err}`);
-            process.exit(9);
+      try {
+        var tx = await Transaction.collection.insertMany(bulk);
+        bulk = null;
+        if (!('quiet' in config_ && config_.quiet === true)) {
+          console.log(`* ${tx.insertedCount} transactions successfully recorded.`);
+        }
+      } catch (err) { 
+        if (err.code === 11000) {
+          if (!('quiet' in config_ && config_.quiet === true)) {
+            console.log(`Skip: Duplicate transaction key ${err}`);
           }
         } else {
-          if (!('quiet' in config_ && config_.quiet === true)) {
-            console.log(`* ${tx.insertedCount} transactions successfully recorded.`);
-          }
+          console.log(`Error: Aborted due to error on Transaction: ${err}`);
+          process.exit(9);
         }
-      });
+      }
     }
   }
 };
@@ -395,30 +395,31 @@ const syncChain = function (config_, nextBlock) {
     }
 
     let done = 0;
-    function processBlock(error, blockData) {
+    async function processBlock(error, blockData) {
       if (error) {
         console.log(`Warning (syncChain): error on getting block with hash/number: ${nextBlock}: ${error}`);
       } else if (blockData === null) {
         console.log(`Warning: null block data received from the block with hash/number: ${nextBlock}`);
       } else {
-        writeBlockToDB(config_, blockData);
-        writeTransactionsToDB(config_, blockData);
+        await writeBlockToDB(config_, blockData);
+        await writeTransactionsToDB(config_, blockData);
         ++done;
       }
     }
 
     let count = config_.bulkSize;
-    console.log("new round for block " + nextBlock);
+    console.log("new round for block: " + nextBlock);
     while (nextBlock >= config_.startBlock && count > 0) {
       web3.eth.getBlock(nextBlock, true, processBlock);
       nextBlock--;
       count--;
     }
 
-    console.log('waiting batch finish for next block' + nextBlock);
+    console.log('waiting batch finish for next block: ' + nextBlock);
     // block
     var nextClock = setInterval(() => {
       if (done != config_.bulkSize) return;
+
       syncChain(config_, nextBlock);
       clearInterval(nextClock);
     }, 1000);
