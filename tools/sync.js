@@ -44,12 +44,12 @@ let transaction_miners = [];
 // load config.json
 const config = { nodeAddr: 'localhost', wsPort: 8546, bulkSize: 100 };
 try {
-  var local = require('../config.json');
+  let local = require('../config.json');
   _.extend(config, local);
   console.log('config.json found.');
 } catch (error) {
   if (error.code === 'MODULE_NOT_FOUND') {
-    local = require('../config.example.json');
+    let local = require('../config.example.json');
     _.extend(config, local);
     console.log('No config file found. Using default configuration... (config.example.json)');
   } else {
@@ -62,7 +62,7 @@ console.log(`Connecting ${config.nodeAddr}:${config.wsPort}...`);
 const web3 = new Web3(new Web3.providers.WebsocketProvider(`ws://${config.nodeAddr}:${config.wsPort.toString()}`));
 
 const normalizeTX = (txData, receipt, blockData) => {
-  const tx = {
+  let tx = {
     blockHash: txData.blockHash,
     blockNumber: txData.blockNumber,
     from: txData.from.toLowerCase(),
@@ -111,12 +111,12 @@ const writeBlockToDB = async (config_, blockData, flush) => {
   }
 
   if (flush && block_bulkOps.length > 0 || block_bulkOps.length >= config_.bulkSize) {
-    const bulk = block_bulkOps;
+    let bulk = block_bulkOps;
     block_bulkOps = [];
     if (bulk.length === 0) return;
 
     try {
-      var blocks = await Block.collection.insertMany(bulk);
+      let blocks = await Block.collection.insertMany(bulk);
       bulk = null;
       if (!('quiet' in config_ && config_.quiet === true)) {
         console.log(`* ${blocks.insertedCount} blocks successfully written.`);
@@ -152,29 +152,29 @@ const writeTransactionsToDB = async (config_, blockData, flush) => {
   }
 
   if (blockData && blockData.transactions.length > 0) {
-    for (var d in blockData.transactions) {
-      const txData = blockData.transactions[d];
-      const receipt = await web3.eth.getTransactionReceipt(txData.hash);
-      const tx = normalizeTX(txData, receipt, blockData);
+    for (let d in blockData.transactions) {
+      let txData = blockData.transactions[d];
+      let receipt = await web3.eth.getTransactionReceipt(txData.hash);
+      let tx = normalizeTX(txData, receipt, blockData);
       // Contact creation tx, Event logs of internal transaction
       if (txData.input && txData.input.length > 2) {
         // Contact creation tx
         if (txData.to === null) {
           // Support Parity & Geth case
-          var contractAddress;
+          let contractAddress;
           if (txData.creates) {
             contractAddress = txData.creates.toLowerCase();
           } else {
             contractAddress = receipt.contractAddress.toLowerCase();
           }
-          const contractdb = {};
+          let contractdb = {};
           let isTokenContract = true;
-          const Token = new web3.eth.Contract(ERC20ABI, contractAddress);
+          let Token = new web3.eth.Contract(ERC20ABI, contractAddress);
           contractdb.owner = txData.from;
           contractdb.blockNumber = blockData.number;
           contractdb.creationTransaction = txData.hash;
           try {
-            const call = await web3.eth.call({ to: contractAddress, data: web3.utils.sha3('totalSupply()') });
+            let call = await web3.eth.call({ to: contractAddress, data: web3.utils.sha3('totalSupply()') });
             if (call === '0x') {
               isTokenContract = false;
             } else {
@@ -213,10 +213,10 @@ const writeTransactionsToDB = async (config_, blockData, flush) => {
 
         } else {
           // Internal transaction  . write to doc of InternalTx
-          const transfer = {
+          let transfer = {
             'hash': '', 'blockNumber': 0, 'from': '', 'to': '', 'contract': '', 'value': 0, 'timestamp': 0,
           };
-          const methodCode = txData.input.substr(0, 10);
+          let methodCode = txData.input.substr(0, 10);
           if (ERC20_METHOD_DIC[methodCode] === 'transfer' || ERC20_METHOD_DIC[methodCode] === 'transferFrom') {
             if (ERC20_METHOD_DIC[methodCode] === 'transfer') {
               // Token transfer transaction
@@ -260,14 +260,14 @@ const writeTransactionsToDB = async (config_, blockData, flush) => {
   transaction_blocks++;
 
   if (flush && transaction_blocks > 0 || transaction_blocks >= config_.bulkSize) {
-    const bulk = transaction_bulkOps;
+    let bulk = transaction_bulkOps;
     transaction_bulkOps = [];
     transaction_blocks = 0;
-    const miners = transaction_miners;
+    let miners = transaction_miners;
     transaction_miners = [];
 
     // setup accounts
-    const data = {};
+    let data = {};
     bulk.forEach((tx) => {
       data[tx.from] = { address: tx.from, blockNumber: tx.blockNumber, type: 0 };
       if (tx.to) {
@@ -280,24 +280,24 @@ const writeTransactionsToDB = async (config_, blockData, flush) => {
       data[miner.address] = miner;
     });
 
-    const accounts = Object.keys(data);
+    let accounts = Object.keys(data);
 
     if (bulk.length === 0 && accounts.length === 0) return;
 
     // update balances
     if (config_.settings.useRichList && accounts.length > 0) {
       try {
-        var account, i;
+        let account, i;
         for (i in accounts) {
           account = accounts[i];
-          const { blockNumber } = data[account];
+          let { blockNumber } = data[account];
           
           // get contract account type
-          var code = await web3.eth.getCode(account);
+          let code = await web3.eth.getCode(account);
           if (code.length > 2) {
             data[account].type = 1; // contract type
           }
-          var balance = await  web3.eth.getBalance(account, blockNumber);
+          let balance = await  web3.eth.getBalance(account, blockNumber);
           data[account].balance = parseFloat(web3.utils.fromWei(balance, 'ether'));
         }
 
@@ -323,7 +323,7 @@ const writeTransactionsToDB = async (config_, blockData, flush) => {
 
     if (bulk.length > 0) {
       try {
-        var tx = await Transaction.collection.insertMany(bulk);
+        let tx = await Transaction.collection.insertMany(bulk);
         bulk = null;
         if (!('quiet' in config_ && config_.quiet === true)) {
           console.log(`* ${tx.insertedCount} transactions successfully recorded.`);
@@ -346,7 +346,7 @@ const writeTransactionsToDB = async (config_, blockData, flush) => {
   //Just listen for latest blocks and sync from the start of the app.
 **/
 const listenBlocks = function (config_) {
-  const newBlocks = web3.eth.subscribe('newBlockHeaders', (error, result) => {
+  let newBlocks = web3.eth.subscribe('newBlockHeaders', (error, result) => {
     if (!error) {
       return;
     }
@@ -417,7 +417,7 @@ const syncChain = function (config_, nextBlock) {
 
     console.log('waiting batch finish for next block: ' + nextBlock);
     // block
-    var nextClock = setInterval(() => {
+    let nextClock = setInterval(() => {
       if (done != config_.bulkSize) return;
 
       syncChain(config_, nextBlock);
@@ -435,13 +435,13 @@ const syncChain = function (config_, nextBlock) {
 **/
 const prepareSync = async (config_, callback) => {
   let blockNumber = null;
-  const oldBlockFind = Block.find({}, 'number').lean(true).sort('number').limit(1);
+  let oldBlockFind = Block.find({}, 'number').lean(true).sort('number').limit(1);
   oldBlockFind.exec(async (err, docs) => {
     if (err || !docs || docs.length < 1) {
       // not found in db. sync from config.endBlock or 'latest'
       if (web3.eth.net.isListening()) {
-        const currentBlock = await web3.eth.getBlockNumber();
-        const latestBlock = config_.endBlock || currentBlock || 'latest';
+        let currentBlock = await web3.eth.getBlockNumber();
+        let latestBlock = config_.endBlock || currentBlock || 'latest';
         if (latestBlock === 'latest') {
           web3.eth.getBlock(latestBlock, true, (error, blockData) => {
             if (error) {
@@ -492,7 +492,7 @@ const runPatcher = async (config_, startBlock, endBlock) => {
 
   if (typeof startBlock === 'undefined' || typeof endBlock === 'undefined') {
     // get the last saved block
-    const blockFind = Block.find({}, 'number').lean(true).sort('-number').limit(1);
+    let blockFind = Block.find({}, 'number').lean(true).sort('-number').limit(1);
     blockFind.exec(async (err, docs) => {
       if (err || !docs || docs.length < 1) {
         // no blocks found. terminate runPatcher()
@@ -500,14 +500,14 @@ const runPatcher = async (config_, startBlock, endBlock) => {
         return;
       }
 
-      const lastMissingBlock = docs[0].number + 1;
-      const currentBlock = await web3.eth.getBlockNumber();
+      let lastMissingBlock = docs[0].number + 1;
+      let currentBlock = await web3.eth.getBlockNumber();
       runPatcher(config_, lastMissingBlock, currentBlock - 1);
     });
     return;
   }
 
-  const missingBlocks = endBlock - startBlock + 1;
+  let missingBlocks = endBlock - startBlock + 1;
   if (missingBlocks > 0) {
     if (!('quiet' in config_ && config_.quiet === true)) {
       console.log(`Patching from #${startBlock} to #${endBlock}`);
@@ -565,13 +565,13 @@ const checkBlockDBExistsThenWrite = function (config_, patchData, flush) {
 const quoteInterval = 10 * 60 * 1000;
 
 const getQuote = async () => {
-  const URL = `https://min-api.cryptocompare.com/data/price?fsym=${config.settings.symbol}&tsyms=USD`;
+  let URL = `https://min-api.cryptocompare.com/data/price?fsym=${config.settings.symbol}&tsyms=USD`;
 
   try {
-    const requestUSD = await fetch(URL);
-    const quoteUSD = await requestUSD.json();
+    let requestUSD = await fetch(URL);
+    let quoteUSD = await requestUSD.json();
 
-    var quoteObject = {
+    let quoteObject = {
       timestamp: Math.round(Date.now() / 1000),
       quoteUSD: quoteUSD.USD,
     };
